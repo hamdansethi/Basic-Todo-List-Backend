@@ -1,48 +1,41 @@
+# controllers/todo.py
+from fastapi import HTTPException
 from sqlalchemy.orm import Session
-from helpers.database import get_db
 from models.todo import Todo, TodoCreate, TodoUpdate, TodoResponse
-from datetime import datetime
 
-async def create_todo(todo: TodoCreate) -> TodoResponse:
-    db: Session = next(get_db())
-    db_todo = Todo(
-        title=todo.title,
-        description=todo.description,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow(),
-    )
+async def create_todo(todo: TodoCreate, username: str, db: Session):
+    db_todo = Todo(**todo.dict(), username=username)
     db.add(db_todo)
     db.commit()
     db.refresh(db_todo)
     return TodoResponse.from_orm(db_todo)
 
-async def get_all_todos() -> list[TodoResponse]:
-    db: Session = next(get_db())
-    todos = db.query(Todo).all()
-    return [TodoResponse.from_orm(todo) for todo in todos]
+async def get_all_todos(username: str, role: str, db: Session):
+    if role == "admin":
+        return [TodoResponse.from_orm(todo) for todo in db.query(Todo).all()]
+    return [TodoResponse.from_orm(todo) for todo in db.query(Todo).filter(Todo.username == username).all()]
 
-async def get_todo_by_id(todo_id: int) -> TodoResponse | None:
-    db: Session = next(get_db())
+async def get_todo_by_id(todo_id: int, username: str, role: str, db: Session):
     todo = db.query(Todo).filter(Todo.id == todo_id).first()
-    if todo:
-        return TodoResponse.from_orm(todo)
-    return None
+    if not todo:
+        return None
+    if role != "admin" and todo.username != username:
+        raise HTTPException(status_code=403, detail="Not authorized to access this todo")
+    return TodoResponse.from_orm(todo)
 
-async def update_todo(todo_id: int, todo: TodoUpdate) -> TodoResponse | None:
-    db: Session = next(get_db())
+async def update_todo(todo_id: int, todo: TodoUpdate, username: str, role: str, db: Session):
     db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
     if not db_todo:
         return None
-    update_data = todo.dict(exclude_unset=True)
-    update_data["updated_at"] = datetime.utcnow()
-    for key, value in update_data.items():
+    if role != "admin" and db_todo.username != username:
+        raise HTTPException(status_code=403, detail="Not authorized to update this todo")
+    for key, value in todo.dict(exclude_unset=True).items():
         setattr(db_todo, key, value)
     db.commit()
     db.refresh(db_todo)
     return TodoResponse.from_orm(db_todo)
 
-async def delete_todo(todo_id: int) -> bool:
-    db: Session = next(get_db())
+async def delete_todo(todo_id: int, db: Session):
     db_todo = db.query(Todo).filter(Todo.id == todo_id).first()
     if not db_todo:
         return False
